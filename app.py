@@ -4,33 +4,50 @@ import numpy as np
 import requests
 from datetime import datetime, timedelta
 
-
 st.set_page_config(page_title="Prédiction Paris Foot", layout="wide")
 
 st.title("📊 Paris Foot - Matchs à forte probabilité")
 st.write("Affiche les matchs avec un écart de victoire ≥ seuil choisi dans les prochaines heures.")
 
 # -----------------------------
-# 1. Paramètres
+# Paramètres
 # -----------------------------
 API_TOKEN = "bb02b715d52b46b48f881df7f2205202"
 headers = {"X-Auth-Token": API_TOKEN}
 
 competitions = {
     "PL": "Premier League",
-    "PD": "La Liga",
-    "SA": "Serie A",
-    "BL1": "Bundesliga",
-    "FL1": "Ligue 1"
+    "PD": "La Liga"
 }
 
-# Paramètres interactifs
 DIFF_THRESHOLD = st.sidebar.slider("Écart minimum (%)", min_value=5, max_value=50, value=10)
 TIME_WINDOW_HOURS = st.sidebar.slider("Prochaines heures à analyser", min_value=24, max_value=168, value=72)
 
 # -----------------------------
-# 2. Fonction de probabilité
+# Fonctions avec cache
 # -----------------------------
+@st.cache_data(ttl=3600)
+def get_teams(comp_id):
+    url_teams = f"https://api.football-data.org/v4/competitions/{comp_id}/teams"
+    resp = requests.get(url_teams, headers=headers)
+    if resp.status_code == 429:
+        return "TOO_MANY_REQUESTS"
+    if resp.status_code != 200:
+        st.warning(f"Erreur API Teams {comp_id}: {resp.status_code}")
+        return []
+    return resp.json()["teams"]
+
+@st.cache_data(ttl=3600)
+def get_matches(comp_id):
+    url_matches = f"https://api.football-data.org/v4/competitions/{comp_id}/matches?status=SCHEDULED"
+    resp = requests.get(url_matches, headers=headers)
+    if resp.status_code == 429:
+        return "TOO_MANY_REQUESTS"
+    if resp.status_code != 200:
+        st.warning(f"Erreur API Matches {comp_id}: {resp.status_code}")
+        return []
+    return resp.json().get("matches", [])
+
 def compute_prob(home_stats, away_stats):
     home_score = (home_stats['goalsFor'] / max(home_stats['matchesPlayed'],1)) / \
                  ((home_stats['goalsFor'] / max(home_stats['matchesPlayed'],1)) + 
@@ -39,20 +56,21 @@ def compute_prob(home_stats, away_stats):
     return home_score, 1-home_score
 
 # -----------------------------
-# 3. Récupération des matchs
+# Récupération des matchs
 # -----------------------------
 all_matches = []
 now = datetime.utcnow()
 time_limit = now + timedelta(hours=TIME_WINDOW_HOURS)
+api_blocked = False  # indicateur pour 429
 
 for comp_id, comp_name in competitions.items():
-    # Info équipes
-    url_teams = f"https://api.football-data.org/v4/competitions/{comp_id}/teams"
-    resp_teams = requests.get(url_teams, headers=headers)
-    if resp_teams.status_code != 200:
-        st.warning(f"Erreur API Teams {comp_name}: {resp_teams.status_code}")
+    teams_data = get_teams(comp_id)
+    if teams_data == "TOO_MANY_REQUESTS":
+        api_blocked = True
         continue
-    teams_data = resp_teams.json()["teams"]
+    if not teams_data:
+        continue
+
     teams_stats = {}
     for t in teams_data:
         teams_stats[t["name"]] = {
@@ -61,13 +79,10 @@ for comp_id, comp_name in competitions.items():
             "matchesPlayed": t.get("playedGames", 10)
         }
 
-    # Matchs programmés
-    url_matches = f"https://api.football-data.org/v4/competitions/{comp_id}/matches?status=SCHEDULED"
-    resp_matches = requests.get(url_matches, headers=headers)
-    if resp_matches.status_code != 200:
-        st.warning(f"Erreur API Matches {comp_name}: {resp_matches.status_code}")
+    matches = get_matches(comp_id)
+    if matches == "TOO_MANY_REQUESTS":
+        api_blocked = True
         continue
-    matches = resp_matches.json().get("matches", [])
 
     for m in matches:
         match_time = datetime.strptime(m["utcDate"], "%Y-%m-%dT%H:%M:%SZ")
@@ -91,3 +106,15 @@ for comp_id, comp_name in competitions.items():
                 "Différence (%)": round(diff,1),
                 "Heure Match UTC": match_time.strftime("%Y-%m-%d %H:%M")
             })
+
+# -----------------------------
+# Affichage
+# -----------------------------
+if api_blocked:
+    st.error("⚠️ L'API a bloqué certaines requêtes (Erreur 429). Réessayez plus tard ou réduisez le nombre de championnats.")
+
+df_matches = pd.DataFrame(all_matches)
+if df_matches.empty and not api_blocked:
+    st.info(f"Aucun match dans les prochaines {TIME_WINDOW_HOURS} heures avec un écart ≥ {DIFF_THRESHOLD}%.")
+elif not df_matches.empty:
+    st.dataframe(df_matches)
