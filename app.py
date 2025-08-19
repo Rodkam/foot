@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
+
 
 st.set_page_config(page_title="Prédiction Paris Foot", layout="wide")
 
@@ -91,23 +91,3 @@ for comp_id, comp_name in competitions.items():
                 "Différence (%)": round(diff,1),
                 "Heure Match UTC": match_time.strftime("%Y-%m-%d %H:%M")
             })
-
-# -----------------------------
-# 4. Affichage
-# -----------------------------
-df_matches = pd.DataFrame(all_matches)
-if df_matches.empty:
-    st.info(f"Aucun match dans les prochaines {TIME_WINDOW_HOURS} heures avec un écart ≥ {DIFF_THRESHOLD}%.")
-else:
-    st.dataframe(df_matches)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    x = np.arange(len(df_matches))
-    ax.bar(x - 0.2, df_matches["Victoire Home (%)"], width=0.4, label="Home", color="blue")
-    ax.bar(x + 0.2, df_matches["Victoire Away (%)"], width=0.4, label="Away", color="red")
-    ax.set_xticks(x)
-    ax.set_xticklabels(df_matches["Match"], rotation=45, ha="right")
-    ax.set_ylabel("Probabilité (%)")
-    ax.set_title(f"Matchs des prochaines {TIME_WINDOW_HOURS}h avec écart ≥ {DIFF_THRESHOLD}%")
-    ax.legend()
-    st.pyplot(fig)
